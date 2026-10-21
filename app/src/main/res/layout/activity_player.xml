@@ -1,0 +1,130 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="#000000">
+
+    <SurfaceView
+        android:id="@+id/surface"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <View
+        android:id="@+id/gestures"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent" />
+
+    <TextView
+        android:id="@+id/centerInfo"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="center"
+        android:background="#AA000000"
+        android:padding="16dp"
+        android:textColor="#FFFFFF"
+        android:textSize="22sp"
+        android:visibility="gone" />
+
+    <LinearLayout
+        android:id="@+id/topBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top"
+        android:background="@color/panel"
+        android:gravity="center_vertical"
+        android:orientation="horizontal"
+        android:padding="4dp">
+
+        <Button
+            android:id="@+id/btnBack"
+            style="@style/Btn"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="←" />
+
+        <TextView
+            android:id="@+id/title"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:ellipsize="end"
+            android:singleLine="true"
+            android:textColor="#FFFFFF"
+            android:textSize="16sp" />
+
+        <Button
+            android:id="@+id/btnRepair"
+            style="@style/Btn"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Opravit" />
+    </LinearLayout>
+
+    <LinearLayout
+        android:id="@+id/bottomBar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_gravity="bottom"
+        android:background="@color/panel"
+        android:orientation="vertical"
+        android:padding="4dp">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/btnPlay"
+                style="@style/Btn"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="⏸"
+                android:textSize="20sp" />
+
+            <TextView
+                android:id="@+id/timeCur"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="0:00"
+                android:textColor="#FFFFFF" />
+
+            <SeekBar
+                android:id="@+id/seek"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:max="1000" />
+
+            <TextView
+                android:id="@+id/timeDur"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:paddingEnd="8dp"
+                android:text="0:00"
+                android:textColor="#FFFFFF" />
+        </LinearLayout>
+
+        <HorizontalScrollView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:scrollbars="none">
+
+            <LinearLayout
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+
+                <Button android:id="@+id/btnSub" style="@style/Btn" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Titulky" />
+                <Button android:id="@+id/btnAudio" style="@style/Btn" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Zvuková stopa" />
+                <Button android:id="@+id/btnSpeed" style="@style/Btn" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Rychlost 1×" />
+                <Button android:id="@+id/btnNorm" style="@style/Btn" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Vyrovnat hlasitost: vyp" />
+                <Button android:id="@+id/btnSleep" style="@style/Btn" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Spánek: vyp" />
+                <Button android:id="@+id/btnAB" style="@style/Btn" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Smyčka A-B" />
+                <Button android:id="@+id/btnFrame" style="@style/Btn" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Snímek +1" />
+                <Button android:id="@+id/btnRotate" style="@style/Btn" android:layout_width="wrap_content" android:layout_height="wrap_content" android:text="Otočit" />
+            </LinearLayout>
+        </HorizontalScrollView>
+    </LinearLayout>
+</FrameLayout>
