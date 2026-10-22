@@ -16,6 +16,7 @@ import android.widget.Button
 import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.activity.ComponentActivity
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.OptIn
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MimeTypes
@@ -28,6 +29,9 @@ import androidx.media3.transformer.ExportException
 import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.ProgressHolder
 import androidx.media3.transformer.Transformer
+import android.os.ParcelFileDescriptor
+import cz.jirka.prehravac.recovery.MoovRecovery
+import java.io.RandomAccessFile
 import java.io.File
 import java.io.FileInputStream
 import java.nio.ByteBuffer
@@ -50,6 +54,12 @@ class RepairActivity : ComponentActivity() {
     private var outFile: File? = null
     private var fixedUri: Uri? = null
     private var name = "video"
+    private var missingIndex = false
+
+    private val pickReference =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { ref ->
+            if (ref != null) startRecovery(ref)
+        }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -65,8 +75,12 @@ class RepairActivity : ComponentActivity() {
         btnFull = findViewById(R.id.btnFull)
         btnPlayFixed = findViewById(R.id.btnPlayFixed)
 
-        btnQuick.setOnClickListener { startRepair(transcode = false) }
-        btnFull.setOnClickListener { startRepair(transcode = true) }
+        btnQuick.setOnClickListener {
+            if (missingIndex) startRecovery(null) else startRepair(transcode = false)
+        }
+        btnFull.setOnClickListener {
+            if (missingIndex) pickReference.launch(arrayOf("video/*", "*/*")) else startRepair(transcode = true)
+        }
         btnPlayFixed.setOnClickListener {
             fixedUri?.let {
                 startActivity(Intent(this, PlayerActivity::class.java).setData(it))
@@ -79,8 +93,13 @@ class RepairActivity : ComponentActivity() {
                 diagView.text = d.text
                 btnQuick.isEnabled = d.canTry
                 btnFull.isEnabled = d.canTry
+                if (missingIndex) {
+                    btnQuick.text = "Obnovit index automaticky"
+                    btnFull.text = "Obnovit pomocí referenčního videa…"
+                }
                 status.text = when {
                     !d.canTry -> ""
+                    missingIndex -> "Zkus nejdřív automatickou obnovu. Když nepůjde, vyber referenční video – jiné funkční video ze stejného zdroje (stejný telefon nebo stejný web/kanál)."
                     d.recommendFull -> "Doporučuji: Plná oprava."
                     else -> "Doporučuji: Rychlá oprava (zkus nejdřív tu)."
                 }
@@ -143,12 +162,13 @@ class RepairActivity : ComponentActivity() {
             sb.append("Struktura MP4: ${boxes.joinToString(", ")}\n")
             if ("mdat" in boxes && "moov" !in boxes) {
                 sb.append(
-                    "\n❌ Chybí index videa (moov). Typicky: nahrávání se nedokončilo – vybitý telefon, " +
-                        "pád aplikace, nedokončené stažení.\n\nObraz a zvuk v souboru jsou, ale bez indexu je " +
-                        "neumí nic otevřít. Obnovu pomocí referenčního videa ze stejného telefonu přidáme " +
-                        "v další verzi."
+                    "\n❌ Chybí index videa (moov). Typicky: nahrávání se nedokončilo (vybitý telefon, " +
+                        "pád aplikace) nebo se video nestáhlo celé.\n\nObraz v souboru je, jen ho bez indexu " +
+                        "nic neumí otevřít. Index umím postavit znovu.\n\nPozor: u nedokončeného stažení " +
+                        "konec videa v souboru fyzicky chybí – obnoví se jen to, co se stáhlo."
                 )
-                return Diag(sb.toString(), false, false)
+                missingIndex = true
+                return Diag(sb.toString(), true, false)
             }
             if ("?useknuto" in boxes) problems += "Soubor je useknutý (konec chybí) – přehraje se jen část."
             if ("?poškozeno" in boxes) problems += "Struktura souboru je uprostřed poškozená."
@@ -305,13 +325,68 @@ class RepairActivity : ComponentActivity() {
         }
     }
 
-    private fun saveResult(out: File) {
-        handler.removeCallbacks(progressTick)
-        progress.progress = 100
-        status.text = "Ukládám…"
+    // ---------- obnova chybejiciho indexu ----------
+
+    private fun startRecovery(ref: Uri?) {
+        btnQuick.isEnabled = false
+        btnFull.isEnabled = false
+        btnPlayFixed.visibility = View.GONE
+        progress.visibility = View.VISIBLE
+        progress.progress = 0
+        status.text = if (ref == null) "Hledám nastavení kodeku a skládám snímky…"
+        else "Obnovuji podle referenčního videa „${displayName(ref)}“…"
+
+        exec.execute {
+            val out = File(cacheDir, "obnova_${System.currentTimeMillis()}.mp4")
+            outFile = out
+            var lastP = -1
+            try {
+                val bPfd = contentResolver.openFileDescriptor(uri, "r") ?: throw IllegalStateException("soubor nejde otevřít")
+                val rPfd = ref?.let { contentResolver.openFileDescriptor(it, "r") }
+                val result = ParcelFileDescriptor.AutoCloseInputStream(bPfd).use { bIn ->
+                    (rPfd?.let { ParcelFileDescriptor.AutoCloseInputStream(it) }).use { rIn ->
+                        RandomAccessFile(out, "rw").use { raf ->
+                            MoovRecovery.recover(bIn.channel, rIn?.channel, raf.channel, 0.0) { pct ->
+                                if (pct != lastP) {
+                                    lastP = pct
+                                    runOnUiThread { progress.progress = pct }
+                                }
+                            }
+                        }
+                    }
+                }
+                val summary = "Obnoveno: ${result.frames} snímků (${fmtTime(result.seconds)}), " +
+                    "${result.width}×${result.height}, ${result.codec}, nastavení ${result.configSource}.\n" +
+                    "Zvuk tahle verze zatím neobnovuje – video bude bez zvuku.\n"
+                saveResult(out, "_obnoveno", summary)
+            } catch (e: MoovRecovery.RecoveryException) {
+                out.delete()
+                runOnUiThread { recoveryFailed(e.message ?: "neznámá chyba") }
+            } catch (e: Exception) {
+                out.delete()
+                runOnUiThread { recoveryFailed("Chyba při čtení/zápisu: ${e.message}") }
+            }
+        }
+    }
+
+    private fun recoveryFailed(msg: String) {
+        progress.visibility = View.GONE
+        btnQuick.isEnabled = true
+        btnFull.isEnabled = true
+        status.text = "❌ $msg"
+    }
+
+    private fun saveResult(out: File) = saveResult(out, "_opraveno", "")
+
+    private fun saveResult(out: File, suffix: String, prefix: String) {
+        runOnUiThread {
+            handler.removeCallbacks(progressTick)
+            progress.progress = 100
+            status.text = prefix + "Ukládám…"
+        }
         exec.execute {
             val base = name.substringBeforeLast('.')
-            val newName = "${base}_opraveno.mp4"
+            val newName = "${base}${suffix}.mp4"
             val values = ContentValues().apply {
                 put(MediaStore.Video.Media.DISPLAY_NAME, newName)
                 put(MediaStore.Video.Media.MIME_TYPE, "video/mp4")
@@ -338,7 +413,7 @@ class RepairActivity : ComponentActivity() {
                 btnFull.isEnabled = true
                 if (result != null) {
                     fixedUri = result
-                    status.text = "✅ Hotovo. Uloženo jako Movies/Opravene/$newName\nPůvodní video zůstalo beze změny."
+                    status.text = prefix + "✅ Hotovo. Uloženo jako Movies/Opravene/$newName\nPůvodní video zůstalo beze změny."
                     btnPlayFixed.visibility = View.VISIBLE
                 } else {
                     status.text = "❌ Opravené video se nepodařilo uložit (málo místa?)."

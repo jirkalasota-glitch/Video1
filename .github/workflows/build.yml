@@ -32,8 +32,8 @@ jobs:
       - name: Zverejnit ke stazeni
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: v0.1.${{ github.run_number }}
-          name: Přehrávač 0.1.${{ github.run_number }}
+          tag_name: v0.2.${{ github.run_number }}
+          name: Přehrávač 0.2.${{ github.run_number }}
           body: "Stáhni **prehravac.apk** níže a nainstaluj."
           files: prehravac.apk
           make_latest: true
