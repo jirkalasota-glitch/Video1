@@ -56,6 +56,17 @@ class PlayerActivity : ComponentActivity(), SurfaceHolder.Callback {
     private var webLoadAt = 0L
     private var webFailChecked = false
 
+    // diagnostika: posledni hlasky z mpv a yt-dlp, at je videt proc to nejde
+    private val mpvLog = ArrayDeque<String>()
+    private var ytdlpError: String? = null
+    private var streamInfo: String? = null
+    private val logObserver = MPVLib.LogObserver { prefix, level, text ->
+        if (level <= MPVLib.MPV_LOG_LEVEL_INFO) synchronized(mpvLog) {
+            mpvLog.addLast("[$prefix] ${text.trimEnd()}")
+            while (mpvLog.size > 40) mpvLog.removeFirst()
+        }
+    }
+
     private val speeds = doubleArrayOf(0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 3.0)
     private var speedIdx = 2
     private var normOn = false
@@ -105,6 +116,7 @@ class PlayerActivity : ComponentActivity(), SurfaceHolder.Callback {
         if (isWeb) findViewById<View>(R.id.btnRepair).visibility = View.GONE
 
         Mpv.init(this)
+        MPVLib.addLogObserver(logObserver)
         findViewById<SurfaceView>(R.id.surface).holder.addCallback(this)
 
         setupButtons()
@@ -175,6 +187,7 @@ class PlayerActivity : ComponentActivity(), SurfaceHolder.Callback {
                 Web.resolve(this, url) { st -> runOnUiThread { if (!isDestroyed) info(st, 0) } }
             } catch (e: Throwable) {
                 val err = Web.shortError(e)
+                ytdlpError = (e.message ?: e.toString()).lines().filter { it.isNotBlank() }.takeLast(15).joinToString("\n")
                 runOnUiThread {
                     if (isDestroyed) return@runOnUiThread
                     // treba je to primo stream bez pripony - zkusime ho dat mpv rovnou
@@ -189,6 +202,8 @@ class PlayerActivity : ComponentActivity(), SurfaceHolder.Callback {
 
     private fun startWeb(s: Web.Stream) {
         s.title?.let { findViewById<TextView>(R.id.title).text = it }
+        streamInfo = "video: " + Uri.parse(s.video).host + (s.audio?.let { "\nzvuk zvlášť: " + Uri.parse(it).host } ?: "") +
+            "\nhlavičky: " + s.headers.keys.joinToString(", ")
         for ((k, v) in s.headers) {
             if (k.equals("User-Agent", true)) MPVLib.setPropertyString("user-agent", v)
             else MPVLib.command(arrayOf("change-list", "http-header-fields", "append", "$k: $v"))
@@ -231,11 +246,14 @@ class PlayerActivity : ComponentActivity(), SurfaceHolder.Callback {
                     // uz hraje - schovat "Nacitam"
                     webLoadAt = 0
                     centerInfo.visibility = View.GONE
-                } else if (!webFailChecked && SystemClock.elapsedRealtime() - webLoadAt > 3000 && mpvBool("idle-active")) {
+                } else if (!webFailChecked && (
+                        (SystemClock.elapsedRealtime() - webLoadAt > 3000 && mpvBool("idle-active")) ||
+                        SystemClock.elapsedRealtime() - webLoadAt > 30000)
+                ) {
                     webFailChecked = true
                     webLoadAt = 0
-                    info("Video se nepodařilo přehrát", 0)
-                    toast("Video se nepodařilo přehrát (chráněné, smazané nebo nepodporované)")
+                    centerInfo.visibility = View.GONE
+                    showDiagnostics()
                 }
             }
 
@@ -266,6 +284,42 @@ class PlayerActivity : ComponentActivity(), SurfaceHolder.Callback {
         if (duration <= 0) return
         if (position > 5 && position < duration - 10) Positions.set(this, uri, position.toFloat())
         else if (position >= duration - 10) Positions.clear(this, uri)
+    }
+
+    private fun showDiagnostics() {
+        val ver = try { Web.version(this) } catch (_: Throwable) { "?" }
+        val mpv = synchronized(mpvLog) {
+            mpvLog.filter { !it.contains("Set property") }.takeLast(20).joinToString("\n")
+        }
+        val text = buildString {
+            append("Odkaz: ").append(uri).append('\n')
+            append("yt-dlp: ").append(ver).append('\n')
+            if (ytdlpError != null) append("\n--- yt-dlp chyba ---\n").append(ytdlpError).append('\n')
+            if (streamInfo != null) append("\n--- nalezený stream ---\n").append(streamInfo).append('\n')
+            append("\n--- mpv ---\n").append(mpv.ifBlank { "(nic)" })
+        }
+        val summary = when {
+            ytdlpError != null -> "Na stránce se nepodařilo najít video:\n" + Web.shortError(Exception(ytdlpError))
+            else -> "Video se našlo, ale přehrávač ho nedokázal otevřít."
+        }
+        val tv = TextView(this).apply {
+            this.text = summary + "\n\n" + text
+            setTextIsSelectable(true)
+            textSize = 12f
+            val p = (16 * resources.displayMetrics.density).toInt()
+            setPadding(p, p, p, p)
+        }
+        android.app.AlertDialog.Builder(this)
+            .setTitle("Nejde přehrát")
+            .setView(android.widget.ScrollView(this).apply { addView(tv) })
+            .setPositiveButton("Kopírovat chybu") { _, _ ->
+                val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                cm.setPrimaryClip(android.content.ClipData.newPlainText("chyba", text))
+                toast("Zkopírováno – pošli to Claudovi")
+            }
+            .setNegativeButton("Zavřít") { _, _ -> finish() }
+            .setCancelable(false)
+            .show()
     }
 
     companion object {
@@ -531,6 +585,7 @@ class PlayerActivity : ComponentActivity(), SurfaceHolder.Callback {
 
     override fun onDestroy() {
         handler.removeCallbacksAndMessages(null)
+        MPVLib.removeLogObserver(logObserver)
         if (::uri.isInitialized) {
             savePosition()
             try {

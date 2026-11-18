@@ -56,6 +56,10 @@ object Web {
         return if (st == YoutubeDL.UpdateStatus.DONE) "yt-dlp aktualizováno ($ver)" else "yt-dlp je aktuální ($ver)"
     }
 
+    fun version(ctx: Context): String =
+        YoutubeDL.getInstance().versionName(ctx.applicationContext)
+            ?: YoutubeDL.getInstance().version(ctx.applicationContext) ?: "přibalená (stará)"
+
     /** Na pozadi, max jednou za den. */
     fun autoUpdate(ctx: Context) {
         if (System.currentTimeMillis() - prefs(ctx).getLong("lastUpdate", 0) < DAY) return
