@@ -52,6 +52,8 @@ dependencies {
     // yt-dlp (+ Python) - najde video na strance (YouTube, Vimeo, TikTok, X ...); samo se aktualizuje
     implementation("io.github.junkfood02.youtubedl-android:library:0.17.2")
 
+    // skryty prohlizec, ktery najde video na jakekoliv strance
+    implementation("androidx.webkit:webkit:1.12.1")
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.activity:activity-ktx:1.9.3")
 }

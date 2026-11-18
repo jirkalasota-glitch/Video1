@@ -202,7 +202,6 @@ class PlayerActivity : ComponentActivity(), SurfaceHolder.Callback {
                         showDiagnostics()
                     } else {
                         // web yt-dlp nezna -> najdeme video ve vestavenem prohlizeci
-                        toast("yt-dlp: $err – hledám video přímo na stránce")
                         openSniffer()
                     }
                 }
@@ -302,6 +301,8 @@ class PlayerActivity : ComponentActivity(), SurfaceHolder.Callback {
 
     private fun openSniffer() {
         startActivity(Intent(this, SnifferActivity::class.java).setData(uri))
+        @Suppress("DEPRECATION")
+        overridePendingTransition(0, 0)
         finish()
     }
 
@@ -339,7 +340,7 @@ class PlayerActivity : ComponentActivity(), SurfaceHolder.Callback {
             .setNegativeButton("Zavřít") { _, _ -> finish() }
             .apply {
                 if (!isYoutube() && intent.getStringExtra(EXTRA_STREAM) == null)
-                    setNeutralButton("Hledat v prohlížeči") { _, _ -> openSniffer() }
+                    setNeutralButton("Zkusit jinak") { _, _ -> openSniffer() }
             }
             .setCancelable(false)
             .show()
