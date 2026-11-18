@@ -42,6 +42,24 @@ class SnifferActivity : ComponentActivity() {
     private var done = false
     private val handler = Handler(Looper.getMainLooper())
     private val found = LinkedHashMap<String, String>() // url -> referer
+    private val durations = HashMap<String, Double>()   // url -> delka videa (kdyz ji zname)
+
+    /** Reklamni a sledovaci servery - blokujeme jako adblock, at se reklama pred videem vubec nenacte. */
+    private val adHosts = listOf(
+        "doubleclick.net", "googlesyndication.com", "googleadservices.com", "adservice.google.",
+        "imasdk.googleapis.com", "pagead2.", "googletagservices.com", "g.doubleclick",
+        "adnxs.com", "rubiconproject.com", "pubmatic.com", "openx.net", "criteo.", "casalemedia.com",
+        "smartadserver.com", "teads.tv", "spotxchange.com", "spotx.tv", "springserve.com", "adform.net",
+        "taboola.com", "outbrain.com", "amazon-adsystem.com", "adsrvr.org", "yieldmo.com", "3lift.com",
+        "exoclick.com", "exosrv.com", "popads.net", "popcash.net", "propellerads.com", "adsterra.com",
+        "onclickads.net", "juicyads.com", "trafficjunky.", "hilltopads.", "a-ads.com", "adcash.com",
+        "r2b2.cz", "r2b2.io", "caroda.io", "ssp.seznam.cz", "im.seznam.cz/ads", "sklik.cz", "performax.cz",
+        "etarget.", "imedia.cz", "adocean.", "gemius.", "aimatch.com", "ad.cpex.cz", "vidoomy.com",
+        "connatix.com", "primis.tech", "aniview.com", "vlitag.com", "jwpltx.com", "mgid.com", "revcontent.com"
+    )
+    private val emptyResponse get() = WebResourceResponse("text/plain", "utf-8", java.io.ByteArrayInputStream(ByteArray(0)))
+
+    private fun isAd(host: String, url: String) = adHosts.any { host.contains(it) || url.contains(it) }
 
     private val media = Regex(
         "\\.(m3u8|mpd|mp4|m4v|webm|mkv|mov|flv)(\\?|#|$)|/manifest(\\.|/|\\?)|mime=video",
@@ -65,7 +83,7 @@ class SnifferActivity : ComponentActivity() {
           function report(){
             document.querySelectorAll('video, video source').forEach(function(v){
               var s = v.currentSrc || v.src;
-              if (s && s.indexOf('http') === 0) { try { VP.found(s, location.href); } catch(e){} }
+              if (s && s.indexOf('http') === 0) { try { VP.found(s, location.href, (isFinite(v.duration) ? v.duration : 0) || 0); } catch(e){} }
             });
           }
           function tick(){
@@ -104,7 +122,10 @@ class SnifferActivity : ComponentActivity() {
         }
         web.addJavascriptInterface(object {
             @JavascriptInterface
-            fun found(src: String, frame: String) = runOnUiThread { add(src, frame) }
+            fun found(src: String, frame: String, duration: Double) = runOnUiThread {
+                if (duration > 0) durations[src] = duration
+                add(src, frame)
+            }
         }, "VP")
         // skript do vsech ramu (i do iframe s prehravacem z jineho webu)
         if (WebViewFeature.isFeatureSupported(WebViewFeature.DOCUMENT_START_SCRIPT)) {
@@ -114,6 +135,7 @@ class SnifferActivity : ComponentActivity() {
         web.webViewClient = object : WebViewClient() {
             override fun shouldInterceptRequest(view: WebView, req: WebResourceRequest): WebResourceResponse? {
                 val u = req.url.toString()
+                if (isAd(req.url.host.orEmpty(), u)) return emptyResponse
                 if (u.startsWith("http") && media.containsMatchIn(u) && !junk.containsMatchIn(u)) {
                     val ref = req.requestHeaders["Referer"] ?: pageUrl
                     runOnUiThread { add(u, ref) }
@@ -200,7 +222,7 @@ class SnifferActivity : ComponentActivity() {
     private var pickScheduled = false
 
     private fun add(url: String, referer: String) {
-        if (done || found.containsKey(url)) return
+        if (done || found.containsKey(url) || isAd(Uri.parse(url).host.orEmpty(), url)) return
         found[url] = referer
         status.text = "Našel jsem video, spouštím…"
         cover.visibility = View.VISIBLE
@@ -208,13 +230,16 @@ class SnifferActivity : ComponentActivity() {
         // u mp4 chvili pockat - prvni byva reklama, hlavni video prijde po ni
         if (!pickScheduled) {
             pickScheduled = true
-            handler.postDelayed({ pick() }, 2500)
+            handler.postDelayed({ pick() }, 3000)
         }
     }
 
     private fun pick() {
         if (done || found.isEmpty()) return
-        val best = found.keys.firstOrNull { playlist.containsMatchIn(it) } ?: found.keys.last()
+        // stream (m3u8/mpd) > nejdelsi video (reklama byva kratka) > posledni nalezene
+        val best = found.keys.firstOrNull { playlist.containsMatchIn(it) }
+            ?: found.keys.maxByOrNull { durations[it] ?: -1.0 }?.takeIf { (durations[it] ?: 0.0) > 0 }
+            ?: found.keys.last()
         play(best)
     }
 
