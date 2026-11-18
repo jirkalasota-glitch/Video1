@@ -65,6 +65,11 @@ object Mpv {
         MPVLib.setOptionString("keep-open", "yes")
         MPVLib.setOptionString("hr-seek", "yes")
         MPVLib.setOptionString("demuxer-max-bytes", "64MiB")
+        // internet: odkazy resi nase yt-dlp, mpv uz ne
+        MPVLib.setOptionString("ytdl", "no")
+        MPVLib.setOptionString("network-timeout", "30")
+        MPVLib.setOptionString("cache", "yes")
+        MPVLib.setOptionString("demuxer-max-back-bytes", "32MiB")
         // odolnost proti poskozenym souborum: zahodit rozbite pakety a pokracovat
         MPVLib.setOptionString("demuxer-lavf-o", "fflags=+discardcorrupt")
         MPVLib.setOptionString("vd-lavc-check-hw-profile", "no")

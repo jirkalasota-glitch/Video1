@@ -51,6 +51,11 @@ class PlayerActivity : ComponentActivity(), SurfaceHolder.Callback {
     private var controlsVisible = true
     private var orientationSet = false
 
+    // video z internetu
+    private var isWeb = false
+    private var webLoadAt = 0L
+    private var webFailChecked = false
+
     private val speeds = doubleArrayOf(0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 3.0)
     private var speedIdx = 2
     private var normOn = false
@@ -76,7 +81,11 @@ class PlayerActivity : ComponentActivity(), SurfaceHolder.Callback {
         setContentView(R.layout.activity_player)
         hideSystemBars()
 
-        uri = intent.data ?: run { finish(); return }
+        // otevreni souboru / odkazu, nebo "Sdilet -> Prehravac" z prohlizece, YouTube apky apod.
+        uri = intent.data
+            ?: Web.findUrl(intent.getStringExtra(Intent.EXTRA_TEXT))?.let { Uri.parse(it) }
+            ?: run { toast("Ve sdíleném textu není odkaz"); finish(); return }
+        isWeb = Web.isWeb(uri)
         audio = getSystemService(AUDIO_SERVICE) as AudioManager
 
         gesturesView = findViewById(R.id.gestures)
@@ -91,7 +100,9 @@ class PlayerActivity : ComponentActivity(), SurfaceHolder.Callback {
         btnNorm = findViewById(R.id.btnNorm)
         btnSleep = findViewById(R.id.btnSleep)
         btnAB = findViewById(R.id.btnAB)
-        findViewById<TextView>(R.id.title).text = displayName(uri)
+        findViewById<TextView>(R.id.title).text = if (isWeb) (uri.host ?: uri.toString()) else displayName(uri)
+        // oprava funguje jen se souborem v telefonu
+        if (isWeb) findViewById<View>(R.id.btnRepair).visibility = View.GONE
 
         Mpv.init(this)
         findViewById<SurfaceView>(R.id.surface).holder.addCallback(this)
@@ -132,6 +143,8 @@ class PlayerActivity : ComponentActivity(), SurfaceHolder.Callback {
     }
 
     private fun loadFile() {
+        resetWebOptions()
+        if (isWeb) { loadWeb(); return }
         val path = try {
             contentResolver.openFileDescriptor(uri, "r")?.detachFd()?.let { "fdclose://$it" }
         } catch (_: Exception) {
@@ -141,6 +154,54 @@ class PlayerActivity : ComponentActivity(), SurfaceHolder.Callback {
         val saved = Positions.get(this, uri)
         MPVLib.setPropertyString("start", if (saved > 5f) saved.toString() else "0")
         MPVLib.command(arrayOf("loadfile", path))
+        if (saved > 5f) toast("Pokračuji od ${fmtTime(saved.toDouble())}")
+    }
+
+    private fun resetWebOptions() {
+        MPVLib.command(arrayOf("change-list", "audio-files", "clr", ""))
+        MPVLib.command(arrayOf("change-list", "http-header-fields", "clr", ""))
+        MPVLib.setPropertyString("user-agent", DEFAULT_UA)
+    }
+
+    private fun loadWeb() {
+        val url = uri.toString()
+        if (Web.isDirect(uri)) {
+            startWeb(Web.Stream(url, null, null, emptyMap()))
+            return
+        }
+        info("Hledám video…", 0)
+        Thread {
+            val stream = try {
+                Web.resolve(this, url) { st -> runOnUiThread { if (!isDestroyed) info(st, 0) } }
+            } catch (e: Throwable) {
+                val err = Web.shortError(e)
+                runOnUiThread {
+                    if (isDestroyed) return@runOnUiThread
+                    // treba je to primo stream bez pripony - zkusime ho dat mpv rovnou
+                    toast("yt-dlp: $err")
+                    startWeb(Web.Stream(url, null, null, emptyMap()))
+                }
+                return@Thread
+            }
+            runOnUiThread { if (!isDestroyed) startWeb(stream) }
+        }.start()
+    }
+
+    private fun startWeb(s: Web.Stream) {
+        s.title?.let { findViewById<TextView>(R.id.title).text = it }
+        for ((k, v) in s.headers) {
+            if (k.equals("User-Agent", true)) MPVLib.setPropertyString("user-agent", v)
+            else MPVLib.command(arrayOf("change-list", "http-header-fields", "append", "$k: $v"))
+        }
+        // video a zvuk zvlast (YouTube apod.) - "append" aby se adresa nerozsekala na dvojteckach
+        s.audio?.let { MPVLib.command(arrayOf("change-list", "audio-files", "append", it)) }
+
+        val saved = Positions.get(this, uri)
+        MPVLib.setPropertyString("start", if (saved > 5f) saved.toString() else "0")
+        info("Načítám…", 0)
+        MPVLib.command(arrayOf("loadfile", s.video))
+        webLoadAt = SystemClock.elapsedRealtime()
+        webFailChecked = false
         if (saved > 5f) toast("Pokračuji od ${fmtTime(saved.toDouble())}")
     }
 
@@ -164,6 +225,19 @@ class PlayerActivity : ComponentActivity(), SurfaceHolder.Callback {
             }
             timeDur.text = fmtTime(duration)
             btnPlay.text = if (paused) "▶" else "⏸"
+
+            if (isWeb && webLoadAt > 0) {
+                if (duration > 0 || position > 0) {
+                    // uz hraje - schovat "Nacitam"
+                    webLoadAt = 0
+                    centerInfo.visibility = View.GONE
+                } else if (!webFailChecked && SystemClock.elapsedRealtime() - webLoadAt > 3000 && mpvBool("idle-active")) {
+                    webFailChecked = true
+                    webLoadAt = 0
+                    info("Video se nepodařilo přehrát", 0)
+                    toast("Video se nepodařilo přehrát (chráněné, smazané nebo nepodporované)")
+                }
+            }
 
             if (!orientationSet) {
                 val w = mpvDouble("video-params/dw")
@@ -192,6 +266,11 @@ class PlayerActivity : ComponentActivity(), SurfaceHolder.Callback {
         if (duration <= 0) return
         if (position > 5 && position < duration - 10) Positions.set(this, uri, position.toFloat())
         else if (position >= duration - 10) Positions.clear(this, uri)
+    }
+
+    companion object {
+        const val DEFAULT_UA =
+            "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36"
     }
 
     // ---------- ovladani ----------

@@ -14,7 +14,7 @@ android {
         minSdk = 29
         targetSdk = 35
         versionCode = buildNumber
-        versionName = "0.2.$buildNumber"
+        versionName = "0.3.$buildNumber"
         ndk { abiFilters += listOf("arm64-v8a") }
     }
 
@@ -48,6 +48,9 @@ dependencies {
     implementation("androidx.media3:media3-transformer:1.5.1")
     implementation("androidx.media3:media3-effect:1.5.1")
     implementation("androidx.media3:media3-common:1.5.1")
+
+    // yt-dlp (+ Python) - najde video na strance (YouTube, Vimeo, TikTok, X ...); samo se aktualizuje
+    implementation("io.github.junkfood02.youtubedl-android:library:0.17.2")
 
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.activity:activity-ktx:1.9.3")

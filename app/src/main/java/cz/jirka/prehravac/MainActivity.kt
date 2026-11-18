@@ -2,6 +2,7 @@ package cz.jirka.prehravac
 
 import android.Manifest
 import android.app.AlertDialog
+import android.content.ClipboardManager
 import android.content.ContentUris
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -14,8 +15,11 @@ import android.util.LruCache
 import android.util.Size
 import android.view.View
 import android.view.ViewGroup
+import android.text.InputType
 import android.widget.BaseAdapter
 import android.widget.Button
+import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.ListView
 import android.widget.TextView
@@ -79,6 +83,11 @@ class MainActivity : ComponentActivity() {
         }
 
         findViewById<Button>(R.id.btnOpen).setOnClickListener { openLauncher.launch(arrayOf("*/*")) }
+        findViewById<Button>(R.id.btnWeb).setOnClickListener { askUrl() }
+        findViewById<Button>(R.id.btnWeb).setOnLongClickListener { updateYtdlp(); true }
+
+        // yt-dlp aktualizovat na pozadi (max 1x denne), at funguji i weby co se zmenily
+        Web.autoUpdate(this)
         btnPerm.setOnClickListener { permLauncher.launch(perm) }
 
         if (checkSelfPermission(perm) == PackageManager.PERMISSION_GRANTED) load()
@@ -141,6 +150,51 @@ class MainActivity : ComponentActivity() {
                 .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         )
     }
+
+    /** Dialog na vlozeni odkazu; kdyz je odkaz ve schrance, rovnou ho predvyplni. */
+    private fun askUrl() {
+        val clip = try {
+            (getSystemService(CLIPBOARD_SERVICE) as ClipboardManager)
+                .primaryClip?.getItemAt(0)?.coerceToText(this)?.toString()
+        } catch (_: Exception) {
+            null
+        }
+        val input = EditText(this).apply {
+            hint = "https://…"
+            inputType = InputType.TYPE_TEXT_VARIATION_URI
+            isSingleLine = true
+            setText(Web.findUrl(clip) ?: "")
+            selectAll()
+        }
+        val box = FrameLayout(this).apply {
+            val p = (20 * resources.displayMetrics.density).toInt()
+            setPadding(p, p / 2, p, 0)
+            addView(input)
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Přehrát z internetu")
+            .setMessage("Vlož adresu videa nebo stránky s videem (YouTube, Vimeo, TikTok, X, zprávy…).")
+            .setView(box)
+            .setPositiveButton("Přehrát") { _, _ ->
+                val url = Web.findUrl(input.text.toString())
+                    ?: Web.findUrl("https://" + input.text.toString().trim())
+                if (url == null) toast("To není platná adresa")
+                else play(Uri.parse(url))
+            }
+            .setNeutralButton("Aktualizovat yt-dlp") { _, _ -> updateYtdlp() }
+            .setNegativeButton("Zrušit", null)
+            .show()
+    }
+
+    private fun updateYtdlp() {
+        toast("Aktualizuji yt-dlp…")
+        exec.execute {
+            val msg = try { Web.update(this) } catch (e: Throwable) { "Aktualizace selhala: ${Web.shortError(e)}" }
+            runOnUiThread { toast(msg) }
+        }
+    }
+
+    private fun toast(t: String) = android.widget.Toast.makeText(this, t, android.widget.Toast.LENGTH_LONG).show()
 
     private fun repair(uri: Uri) {
         startActivity(
