@@ -113,7 +113,11 @@ class PlayerActivity : ComponentActivity(), SurfaceHolder.Callback {
         btnAB = findViewById(R.id.btnAB)
         findViewById<TextView>(R.id.title).text = if (isWeb) (uri.host ?: uri.toString()) else displayName(uri)
         // oprava funguje jen se souborem v telefonu
-        if (isWeb) findViewById<View>(R.id.btnRepair).visibility = View.GONE
+        if (isWeb) {
+            findViewById<View>(R.id.btnRepair).visibility = View.GONE
+            // kdyz hraje spatne video (reklama): podrz nazev nahore -> zobrazi a zkopiruje se diagnostika
+            findViewById<View>(R.id.title).setOnLongClickListener { showDiagnostics(); true }
+        }
 
         Mpv.init(this)
         MPVLib.addLogObserver(logObserver)
@@ -297,6 +301,8 @@ class PlayerActivity : ComponentActivity(), SurfaceHolder.Callback {
         else if (position >= duration - 10) Positions.clear(this, uri)
     }
 
+    private fun fileLoadedOk() = duration > 0 || position > 0
+
     private fun isYoutube() = uri.host.orEmpty().let { it.contains("youtube.") || it.contains("youtu.be") }
 
     private fun openSniffer() {
@@ -317,8 +323,10 @@ class PlayerActivity : ComponentActivity(), SurfaceHolder.Callback {
             if (ytdlpError != null) append("\n--- yt-dlp chyba ---\n").append(ytdlpError).append('\n')
             if (streamInfo != null) append("\n--- nalezený stream ---\n").append(streamInfo).append('\n')
             append("\n--- mpv ---\n").append(mpv.ifBlank { "(nic)" })
+            intent.getStringExtra(EXTRA_LOG)?.let { append("\n\n--- hledání na stránce ---\n").append(it) }
         }
         val summary = when {
+            fileLoadedOk() -> "Video hraje. Když je to špatné video (reklama), zkopíruj tohle a pošli Claudovi."
             ytdlpError != null -> "Na stránce se nepodařilo najít video:\n" + Web.shortError(Exception(ytdlpError))
             else -> "Video se našlo, ale přehrávač ho nedokázal otevřít."
         }
@@ -337,7 +345,7 @@ class PlayerActivity : ComponentActivity(), SurfaceHolder.Callback {
                 cm.setPrimaryClip(android.content.ClipData.newPlainText("chyba", text))
                 toast("Zkopírováno – pošli to Claudovi")
             }
-            .setNegativeButton("Zavřít") { _, _ -> finish() }
+            .setNegativeButton("Zavřít") { _, _ -> if (!fileLoadedOk()) finish() }
             .apply {
                 if (!isYoutube() && intent.getStringExtra(EXTRA_STREAM) == null)
                     setNeutralButton("Zkusit jinak") { _, _ -> openSniffer() }
@@ -350,6 +358,7 @@ class PlayerActivity : ComponentActivity(), SurfaceHolder.Callback {
         const val EXTRA_STREAM = "stream"
         const val EXTRA_HEADERS = "headers"
         const val EXTRA_TITLE = "title"
+        const val EXTRA_LOG = "log"
         const val DEFAULT_UA =
             "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36"
     }

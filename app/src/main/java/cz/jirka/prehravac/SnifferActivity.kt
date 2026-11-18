@@ -43,6 +43,14 @@ class SnifferActivity : ComponentActivity() {
     private val handler = Handler(Looper.getMainLooper())
     private val found = LinkedHashMap<String, String>() // url -> referer
     private val durations = HashMap<String, Double>()   // url -> delka videa (kdyz ji zname)
+    // zaznam pro diagnostiku: co stranka stahovala
+    private val seen = ArrayDeque<String>()
+    private val boring = Regex("\\.(png|jpe?g|gif|webp|svg|ico|css|woff2?|ttf)(\\?|$)", RegexOption.IGNORE_CASE)
+    private fun log(line: String) = synchronized(seen) {
+        seen.addLast(line)
+        while (seen.size > 120) seen.removeFirst()
+    }
+    private fun logText(): String = synchronized(seen) { seen.joinToString("\n") }
 
     /** Reklamni a sledovaci servery - blokujeme jako adblock, at se reklama pred videem vubec nenacte. */
     private val adHosts = listOf(
@@ -176,7 +184,8 @@ class SnifferActivity : ComponentActivity() {
         web.webViewClient = object : WebViewClient() {
             override fun shouldInterceptRequest(view: WebView, req: WebResourceRequest): WebResourceResponse? {
                 val u = req.url.toString()
-                if (isAd(req.url.host.orEmpty(), u)) return emptyResponse
+                if (isAd(req.url.host.orEmpty(), u)) { log("BLOK  " + u.take(150)); return emptyResponse }
+                if (!boring.containsMatchIn(u)) log((if (req.isForMainFrame) "STR   " else "      ") + u.take(200))
                 if (seznamSpl.containsMatchIn(u)) {
                     resolveSeznam(u, req.requestHeaders["Referer"] ?: pageUrl)
                     return null
@@ -246,6 +255,14 @@ class SnifferActivity : ComponentActivity() {
             setOnClickListener { showPage() }
         })
         buttons.addView(Button(this, null, 0, R.style.Btn).apply {
+            text = "Kopírovat log"
+            setOnClickListener {
+                val cm = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                cm.setPrimaryClip(android.content.ClipData.newPlainText("log", "Stránka: $pageUrl\n\n" + logText()))
+                android.widget.Toast.makeText(this@SnifferActivity, "Zkopírováno – pošli to Claudovi", android.widget.Toast.LENGTH_LONG).show()
+            }
+        })
+        buttons.addView(Button(this, null, 0, R.style.Btn).apply {
             text = "Zavřít"
             setOnClickListener { finish() }
         })
@@ -270,6 +287,7 @@ class SnifferActivity : ComponentActivity() {
     private fun add(url: String, referer: String) {
         if (done || found.containsKey(url) || isAd(Uri.parse(url).host.orEmpty(), url)) return
         found[url] = referer
+        log("VIDEO " + url.take(200))
         status.text = "Našel jsem video, spouštím…"
         cover.visibility = View.VISIBLE
         if (playlist.containsMatchIn(url)) { pick(); return } // stream = to hlavni video
@@ -309,6 +327,9 @@ class SnifferActivity : ComponentActivity() {
                 .putExtra(PlayerActivity.EXTRA_STREAM, stream)
                 .putExtra(PlayerActivity.EXTRA_HEADERS, headers)
                 .putExtra(PlayerActivity.EXTRA_TITLE, title)
+                .putExtra(PlayerActivity.EXTRA_LOG, "Vybráno: $stream\nNalezená videa:\n" +
+                    found.keys.joinToString("\n") { "  $it (${durations[it]?.toInt() ?: "?"} s)" } +
+                    "\n\nStránka stahovala:\n" + logText())
         )
         @Suppress("DEPRECATION")
         overridePendingTransition(0, 0)
