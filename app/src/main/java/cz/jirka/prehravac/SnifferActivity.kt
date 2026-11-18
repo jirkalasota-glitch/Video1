@@ -59,6 +59,26 @@ class SnifferActivity : ComponentActivity() {
     )
     private val emptyResponse get() = WebResourceResponse("text/plain", "utf-8", java.io.ByteArrayInputStream(ByteArray(0)))
 
+    /** Seznam (Novinky, Stream.cz, Seznam Zpravy): video se popisuje JSON playlistem "spl2,..." na *.sdn.szn.cz */
+    private val seznamSpl = Regex("sdn\\.(szn\\.)?cz/.*spl2,", RegexOption.IGNORE_CASE)
+    private var splResolving = false
+
+    private fun resolveSeznam(splUrl: String, referer: String) {
+        if (splResolving || done) return
+        splResolving = true
+        runOnUiThread { status.text = "Našel jsem video, spouštím…"; cover.visibility = View.VISIBLE }
+        Thread {
+            val stream = try { Seznam.resolve(splUrl, referer) } catch (_: Throwable) { null }
+            runOnUiThread {
+                splResolving = false
+                if (stream != null && !done) {
+                    found[stream] = referer
+                    play(stream)
+                }
+            }
+        }.start()
+    }
+
     private fun isAd(host: String, url: String) = adHosts.any { host.contains(it) || url.contains(it) }
 
     private val media = Regex(
@@ -86,8 +106,29 @@ class SnifferActivity : ComponentActivity() {
               if (s && s.indexOf('http') === 0) { try { VP.found(s, location.href, (isFinite(v.duration) ? v.duration : 0) || 0); } catch(e){} }
             });
           }
+          var consent = /^(souhlasím|souhlasím a pokračovat|přijmout vše|přijmout všechny|přijmout|povolit vše|rozumím|accept all|accept|i agree|agree|allow all|ok)$/i;
+          var playTxt = /^(přehrát|přehrát video|spustit|spustit video|play|play video|▶)$/i;
+          function deep(root, fn){
+            try {
+              root.querySelectorAll('*').forEach(function(e){
+                fn(e);
+                if (e.shadowRoot) deep(e.shadowRoot, fn);
+              });
+            } catch(e){}
+          }
+          function clickText(){
+            deep(document, function(e){
+              if (e.__vpc) return;
+              var tag = e.tagName;
+              if (tag !== 'BUTTON' && tag !== 'A' && e.getAttribute('role') !== 'button') return;
+              var t = (e.innerText || e.textContent || '').trim();
+              if (t.length > 40) return;
+              if (consent.test(t) || playTxt.test(t)) { e.__vpc = 1; try { e.click(); } catch(x){} }
+            });
+          }
           function tick(){
             n++;
+            clickText();
             document.querySelectorAll('video').forEach(function(v){
               try { v.muted = true; if (v.paused) { var p = v.play(); if (p && p.catch) p.catch(function(){}); } } catch(e){}
             });
@@ -136,6 +177,10 @@ class SnifferActivity : ComponentActivity() {
             override fun shouldInterceptRequest(view: WebView, req: WebResourceRequest): WebResourceResponse? {
                 val u = req.url.toString()
                 if (isAd(req.url.host.orEmpty(), u)) return emptyResponse
+                if (seznamSpl.containsMatchIn(u)) {
+                    resolveSeznam(u, req.requestHeaders["Referer"] ?: pageUrl)
+                    return null
+                }
                 if (u.startsWith("http") && media.containsMatchIn(u) && !junk.containsMatchIn(u)) {
                     val ref = req.requestHeaders["Referer"] ?: pageUrl
                     runOnUiThread { add(u, ref) }
@@ -164,7 +209,8 @@ class SnifferActivity : ComponentActivity() {
 
     private fun sameSite(host: String): Boolean {
         fun base(h: String) = h.split('.').takeLast(2).joinToString(".")
-        return base(host) == base(pageHost)
+        // povolit i navrat na puvodni web (napr. po souhlasu s cookies na cmp.seznam.cz)
+        return base(host) == base(pageHost) || base(host) == base(Uri.parse(pageUrl).host.orEmpty())
     }
 
     private fun buildUi() {
@@ -235,7 +281,7 @@ class SnifferActivity : ComponentActivity() {
     }
 
     private fun pick() {
-        if (done || found.isEmpty()) return
+        if (done || found.isEmpty() || splResolving) return
         // stream (m3u8/mpd) > nejdelsi video (reklama byva kratka) > posledni nalezene
         val best = found.keys.firstOrNull { playlist.containsMatchIn(it) }
             ?: found.keys.maxByOrNull { durations[it] ?: -1.0 }?.takeIf { (durations[it] ?: 0.0) > 0 }
