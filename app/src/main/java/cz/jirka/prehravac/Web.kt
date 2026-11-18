@@ -34,8 +34,19 @@ object Web {
     fun isDirect(uri: Uri) = directExt.containsMatchIn(uri.path ?: "")
 
     /** Vytahne prvni odkaz z textu (napr. ze sdileni z jine aplikace). */
-    fun findUrl(text: String?): String? =
-        text?.let { urlRegex.find(it)?.value?.trimEnd('.', ',', ')', ']') }
+    fun findUrl(text: String?): String? {
+        val u = text?.let { urlRegex.find(it)?.value?.trimEnd('.', ',', ')', ']') } ?: return null
+        // odkaz zkopirovany z vysledku Googlu / presmerovani -> vytahnout skutecnou adresu
+        return try {
+            val p = Uri.parse(u)
+            val inner = listOf("url", "q", "u").firstNotNullOfOrNull { k ->
+                p.getQueryParameter(k)?.takeIf { it.startsWith("http") }
+            }
+            if (inner != null && (p.host.orEmpty().contains("google.") || p.path.orEmpty().contains("redirect"))) inner else u
+        } catch (_: Exception) {
+            u
+        }
+    }
 
     private fun prefs(ctx: Context) = ctx.getSharedPreferences("web", Context.MODE_PRIVATE)
 

@@ -177,6 +177,13 @@ class PlayerActivity : ComponentActivity(), SurfaceHolder.Callback {
 
     private fun loadWeb() {
         val url = uri.toString()
+        // stream uz nasel vestaveny prohlizec (SnifferActivity)
+        intent.getStringExtra(EXTRA_STREAM)?.let { st ->
+            @Suppress("UNCHECKED_CAST", "DEPRECATION")
+            val h = (intent.getSerializableExtra(EXTRA_HEADERS) as? HashMap<String, String>) ?: hashMapOf()
+            startWeb(Web.Stream(st, null, intent.getStringExtra(EXTRA_TITLE), h))
+            return
+        }
         if (Web.isDirect(uri)) {
             startWeb(Web.Stream(url, null, null, emptyMap()))
             return
@@ -190,9 +197,14 @@ class PlayerActivity : ComponentActivity(), SurfaceHolder.Callback {
                 ytdlpError = (e.message ?: e.toString()).lines().filter { it.isNotBlank() }.takeLast(15).joinToString("\n")
                 runOnUiThread {
                     if (isDestroyed) return@runOnUiThread
-                    // treba je to primo stream bez pripony - zkusime ho dat mpv rovnou
-                    toast("yt-dlp: $err")
-                    startWeb(Web.Stream(url, null, null, emptyMap()))
+                    if (isYoutube()) {
+                        // YouTube v prohlizeci odchytit nejde (posila video po kouscich) - ukazat chybu
+                        showDiagnostics()
+                    } else {
+                        // web yt-dlp nezna -> najdeme video ve vestavenem prohlizeci
+                        toast("yt-dlp: $err – hledám video přímo na stránce")
+                        openSniffer()
+                    }
                 }
                 return@Thread
             }
@@ -286,6 +298,13 @@ class PlayerActivity : ComponentActivity(), SurfaceHolder.Callback {
         else if (position >= duration - 10) Positions.clear(this, uri)
     }
 
+    private fun isYoutube() = uri.host.orEmpty().let { it.contains("youtube.") || it.contains("youtu.be") }
+
+    private fun openSniffer() {
+        startActivity(Intent(this, SnifferActivity::class.java).setData(uri))
+        finish()
+    }
+
     private fun showDiagnostics() {
         val ver = try { Web.version(this) } catch (_: Throwable) { "?" }
         val mpv = synchronized(mpvLog) {
@@ -318,11 +337,18 @@ class PlayerActivity : ComponentActivity(), SurfaceHolder.Callback {
                 toast("Zkopírováno – pošli to Claudovi")
             }
             .setNegativeButton("Zavřít") { _, _ -> finish() }
+            .apply {
+                if (!isYoutube() && intent.getStringExtra(EXTRA_STREAM) == null)
+                    setNeutralButton("Hledat v prohlížeči") { _, _ -> openSniffer() }
+            }
             .setCancelable(false)
             .show()
     }
 
     companion object {
+        const val EXTRA_STREAM = "stream"
+        const val EXTRA_HEADERS = "headers"
+        const val EXTRA_TITLE = "title"
         const val DEFAULT_UA =
             "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Mobile Safari/537.36"
     }
